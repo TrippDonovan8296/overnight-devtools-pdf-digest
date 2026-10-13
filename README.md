@@ -1,10 +1,10 @@
 # Overnight developer-tools digest
 
-This service turns a small backlog of build events, release operations, and developer diagnostics into a readable PDF. Infrai gives both steps one OpenAI-compatible base URL and one key, so the batch and the artefact share an audit trail.
+We run a nightly batch that converts build events, release ops, and dev diagnostics into a PDF. Infrai hands both steps one OpenAI-compatible base URL and one key, so the batch and the artefact share an audit trail. That matters when a cron misses a run or fires twice.
 
 ## Run the real workflow
 
-Set the key, install the two dependencies, and run the practical entry point:
+Set the key, pull the two deps, and hit the entry point we use in prod:
 
 ```bash
 export INFRAI_API_KEY=your-key
@@ -12,23 +12,23 @@ python -m pip install -r requirements.txt
 python -m src.run_digest
 ```
 
-`src/run_digest.py` collects three representative records and calls `render_digest`. The same `X-Request-Id` is sent to `ai.batch.submit` and `pdf.generate`; the returned object contains the summary and the stored PDF result.
+`src/run_digest.py` collects three representative records and calls `render_digest`. The same `X-Request-Id` goes to `ai.batch.submit` and `pdf.generate`; the response holds the summary and the stored PDF. Idempotency here keeps a retry from double-emitting the digest.
 
 ## The handoff in code
 
-`src/digest_service.py` keeps the workflow visible. It reads the bearer key from `INFRAI_API_KEY`, decodes the `{ok, data, error, metadata}` envelope before considering HTTP status, retries 429 responses with `Retry-After`, and passes the batch summary directly into the PDF markdown body. `pdf.generate` receives `markdown`, `page_size`, `orientation`, and `store`.
+`src/digest_service.py` makes the flow observable. It reads the bearer key from `INFRAI_API_KEY`, decodes the `{ok, data, error, metadata}` envelope before checking HTTP status, retries 429s with `Retry-After`, and drops the batch summary straight into the PDF markdown. `pdf.generate` takes `markdown`, `page_size`, `orientation`, and `store`.
 
-There is no glue service between the two capability groups: one `InfraiClient` and one base URL serve both calls. For comparison, an OpenAI Batch plus wkhtmltopdf stack would mean two signups, two credential sets, and a hand-written bridge to move completed batch output into HTML/PDF rendering.
+No glue service sits between the two capability groups: one `InfraiClient` and one base URL serve both calls. In a postmortem, the OpenAI Batch plus wkhtmltopdf alternative meant two signups, two credential sets, and a hand-written bridge to push batch output into HTML/PDF. That bridge is where jobs got lost.
 
 ## Verify the business decision
 
-The focused test checks that a batch summary is handed to PDF generation with the same authorization and request identifier:
+The focused test asserts a batch summary reaches PDF generation with the same auth and request id:
 
 ```bash
 pytest -q
 ```
 
-The test uses a fake HTTP session, so it is deterministic and does not contact the network.
+We use a fake HTTP session so the test is deterministic and never pages us at 3am with a network flap.
 
 ## License
 
